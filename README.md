@@ -1,3 +1,5 @@
+REMEMBER TO REMOVE ALL DXP: COMMENTS
+
 This is a guide to using [YubiKey](https://www.yubico.com/products/yubikey-hardware/) as a [SmartCard](https://security.stackexchange.com/questions/38924/how-does-storing-gpg-ssh-private-keys-on-smart-cards-compare-to-plain-usb-drives) for storing GPG encryption, signing and authentication keys, which can also be used for SSH. Many of the principles in this document are applicable to other smart card devices.
 
 Keys stored on YubiKey are non-exportable (as opposed to file-based keys that are stored on disk) and are convenient for everyday use. Instead of having to remember and enter passphrases to unlock SSH/GPG keys, YubiKey needs only a physical touch after being unlocked with a PIN code. All signing and encryption operations happen on the card, rather than in OS memory.
@@ -62,6 +64,18 @@ If you have a comment or suggestion, please open an [issue](https://github.com/d
 - [Notes](#notes)
 - [Links](#links)
 
+# TL;DR
+This is a guide for creating and using GPG in a very secure way. We will generate a main GPG key, and several subkeys. What we are trying to accomplish is that your main key will only ever be accessible within a secure live boot linux OS that won't be on the network. Your daily-use keys (subkeys of your main key) will be stored on a yubikey device. Briefly, what we will cover is:
+
+1. Purchasing recommended hardware (flash drives, yubikey)
+1. Setting up the hardware, including a live boot linux OS
+1. Creating your GPG keys--a main key and several subkeys
+1. Backing up your GPG keys
+1. Copying your GPG subkeys to a yubikey for daily usage
+
+Finally we will go through some use cases for how you will use your keys once created.
+
+
 # Purchase YubiKey
 
 All YubiKeys except the blue "security key" model are compatible with this guide. NEO models are limited to 2048-bit RSA keys. See [Compare YubiKeys](https://www.yubico.com/products/yubikey-hardware/compare-yubikeys/).
@@ -70,43 +84,88 @@ Consider purchasing a pair of YubiKeys, programming both, and storing one in a s
 
 # Verify YubiKey
 
-To confirm your YubiKey is genuine open a [browser with U2F support](https://support.yubico.com/support/solutions/articles/15000009591-how-to-confirm-your-yubico-device-is-genuine-with-u2f) and go to [https://www.yubico.com/genuine/](https://www.yubico.com/genuine/). Insert your Yubico device, and click `Verify Device` to begin the process. Touch the YubiKey when prompted, and if asked, allow it to see the make and model of the device. If you see `Verification complete`, your device is authentic.
+To confirm your YubiKey is genuine open a [browser with U2F support](https://support.yubico.com/support/solutions/articles/15000009591-how-to-confirm-your-yubico-device-is-genuine-with-u2f) and go to [https://www.yubico.com/genuine/](https://www.yubico.com/genuine/). Insert your Yubico device, and click `Verify Device` to begin the process. 
+
+![Verify Yubikey](media/verify_yubikey.png)
+
+Touch the YubiKey when prompted, and if asked, allow it to see the make and model of the device. If you see `Verification complete`, your device is authentic.
+
+![Yubikey Verified](media/yubikey_verified.png)
 
 This website verifies the YubiKey's device attestation certificates signed by a set of Yubico CAs, and helps mitigate [supply chain attacks](https://media.defcon.org/DEF%20CON%2025/DEF%20CON%2025%20presentations/DEFCON-25-r00killah-and-securelyfitz-Secure-Tokin-and-Doobiekeys.pdf).
 
-# Live image
+# Purchase USB Flash Drives
+You will need three, possibly four, USB flash drives. They should be at least 8 or 16 GB in size. Kingston is a good brand. With a sharpie or label maker you should label them: "LIVE BOOT", "GPG KEYS" and "TRANSFER". Or possibly "BOOT", "KEYS" and "XFER" if your flash drives are physically small. A fourth flash drive could be used as an offsite backup of the "GPG KEYS" flash drive.
 
-It is recommended to generate cryptographic keys and configure YubiKey from a secure environment to minimize exposure. One way to do that is by downloading and booting to a [Debian Live](https://www.debian.org/CD/live/) or [Tails](https://tails.boum.org/index.en.html) image loaded from a USB drive into memory.
+The BOOT flash drive will contain a bootable Linux distribution which will load from the drive right into memory. Nothing will be written back to the drive. That is necessary so that each boot will be a fresh start, making it difficult for attackers to install malware. We will refer to this as your "OFFLINE" machine as it will not have networking configured by default. An old laptop that cn boot from a flash drive is great for this purpose. Even better if it has a physical "Wifi Off" switch.
+
+The KEYS flash drive will store an export of your main key and all of the subkeys, as well as a copy of your `gpg.conf` file. This flash drive is all-important. It should NEVER be plugged into a USB port unless that port is on a machine running the operating system from your BOOT flash drive. You will want to encrypt the underlying partition on the KEYS flash drive before writing anything to it (see below for instructions).
+
+The XFER flash drive will be used to move things between your online and offline machines. For example: other public keys that you want to certify (sign) will be copied to your offline machine, certified, then transferred back online to be sent to the key owner. It is up to you if you want to encrypt this flash drive, but if you do, do NOT use the same passphrase as you did for the KEYS flash drive as that could indirectly expose that passphrase to your online machine.
+
+# Purchase OneRNG Hardware Random Number Generator (optional)
+You may want to ensure your computer has enough entropy available (see Entropy section below). A great way to do this is to use a [OneRNG hardware random number generator](https://onerng.info/)
+
+# Diceware Passphrases
+
+Now is a good time to generate some diceware passphrases. You will need at least two passphrases: one for the encrypted partition on your "GPG KEYS" flash drive and one for your main GPG key passphrase. We recommend using the [EFF long word list](https://www.eff.org/dice) and creating at least a five to eight word passphrase. 
+
+You may also want to use your dice to generate the two PINs you will need later for the Yubikey. The PINs don't have to be numeric, you can use up to 127 ASCII characters. The first PIN will be needed each time you access the yubikey for signing, encryption, etc. The second is the admin PIN. You can perhps use a two or three word passphrase for the first, and a four or five work passphrase for the second. 
+
+Record all four passphrases on paper or in your password manager. You will want to store that paper offsite, perhaps in a safe deposit box. Kudos for just memorizing the passphrases and then burning the paper.
+
+# Bootable Live image
+
+It is recommended to generate cryptographic keys and configure your YubiKey from a secure environment to minimize exposure. One way to do that is by downloading and booting to a [Tails](https://tails.boum.org/index.en.html) image loaded from a USB flash drive into memory.
 
 Download the latest image and verify its integrity:
 
 ```console
-$ curl -LfO https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-9.7.0-amd64-xfce.iso
-$ curl -LfO https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA512SUMS
-$ curl -LfO https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA512SUMS.sign
+$ curl -LfO https://archive.torproject.org/amnesia.boum.org/tails/stable/tails-amd64-3.13.2/tails-amd64-3.13.2.img
+$ curl -LfO https://tails.boum.org/tails-signing.key
+$ curl -LfO https://tails.boum.org/torrents/files/tails-amd64-3.13.2.img.sig
 
-$ gpg --verify SHA512SUMS.sign SHA512SUMS
-[...]
-gpg: Good signature from "Debian CD signing key <debian-cd@lists.debian.org>" [unknown]
+$ gpg --import tails-signing.key 
+gpg: key DBB802B258ACD84F: 1954 signatures not checked due to missing keys
+gpg: key DBB802B258ACD84F: public key "Tails developers (offline long-term identity key) <tails@boum.org>" imported
 [...]
 
-$ grep $(sha512sum debian-live-9.6.0-amd64-xfce.iso) SHA512SUMS
-e35dd65fe1b078f71fcf04fa749a05bfefe4aa11a9e80f116ceec0566d65636a4ac84a9aff22aa3f7a8eeb10289d0c2f54dfe7c599d8aa16663e4f9a74f3eec5 debian-live-9.6.0-amd64-xfce.iso
+$ TZ=UTC gpg --no-options --keyid-format long --verify tails-amd64-3.13.2.img.sig tails-amd64-3.13.2.img
+[...]
+gpg: Good signature from "Tails developers (offline long-term identity key) <tails@boum.org>" [unknown]
+[...]
 ```
 
-Mount a USB disk and copy the image over to it:
+Don't worry if you see a warning like
 
 ```console
-$ sudo dd if=debian-live-9.6.0-amd64-xfce.iso of=/dev/sdc bs=4M && sync
+gpg: WARNING: This key is not certified with a trusted signature!
+gpg:          There is no indication that the signature belongs to the owner.
+```
+... that just means you haven't authenticated the signing key. The downloaded image file is still correct.
+
+Insert your "LIVE BOOT" USB flash drive and copy the image over to it:
+
+```console
+$ sudo dd if=tails-amd64-3.13.2.img of=/dev/sdc bs=4M && sync
 ```
 
-Shut down the computer and disconnect any hard drives and unnecessary peripherals.
+If no error message is returned, Tails is being copied on the USB stick. The copy takes some time, generally a few minutes.
 
-Plug in the USB disk and boot to the live image. Configure networking to continue. If the screen locks, unlock with user/live.
+Shut down the computer and, if possible, disconnect any hard drives and unnecessary peripherals.
+
+Make sure your "LIVE BOOT" USB flash drive is still inserted and boot to the live image. Configure networking to continue. 
+
+[DXP: add something about the sudo password] ...
 
 # Required software
 
-Install several packages required for the following steps:
+(DXP: is this section needed? Perhaps you should remove everything in this dcument refering to other operating systems)
+
+
+You will want to make sure you have the latest software since some packages may have been updated since the Tails "LIVE BOOT" flash drive was created.
+
+You can install and update several packages required for the following steps:
 
 **Debian/Ubuntu**
 
@@ -156,6 +215,8 @@ Download and install [Gpg4Win](https://www.gpg4win.org/) and [PuTTY](https://put
 
 ## Entropy
 
+(DXP: make sure to edit this after you get your oneRNG)
+
 Generating keys will require a lot of randomness. To check the available bits of entropy available on Linux:
 
 ```console
@@ -163,7 +224,7 @@ $ cat /proc/sys/kernel/random/entropy_avail
 849
 ```
 
-**Optional** A hardware random number generator like [OneRNG](http://onerng.info/onerng/) will increase the speed of entropy generation and possibly its quality. To install and configure OneRNG:
+Depending on the age of your hardware, it could be a few hundred bits to a few thousand bit. If your hardware shows available entropy in the few hundred bits range, you might consider getting a hardware random number generator. A hardware random number generator like [OneRNG](http://onerng.info/onerng/) will increase the speed of entropy generation and possibly its quality. To install and configure OneRNG:
 
 ```console
 $ sudo apt-get install -y rng-tools at python-gnupg openssl
@@ -196,21 +257,42 @@ $ cat /proc/sys/kernel/random/entropy_avail
 3049
 ```
 
-An entropy pool value greater than 3000 is sufficient.
+An entropy pool value between 2000 and 3000 is likely sufficient.
+
+# Preparing your "GPG KEYS" flash drive
+
+Insert your "GPG KEYS" USB flash drive into your laptop that is running Tails. You can use `dmesg` to find out the device name. Here it is `/dev/sdc`:
+
+```console
+$ sudo dmesg | tail
+[...]
+[  352.164567] sd 8:0:0:0: [sdc] 30031250 512-byte logical blocks: (15.4 GB/14.3 GiB)
+[...]
+``` 
+
+Run the graphical disk utility: (Applications -> Utilities -> Disks)
+
+Find the flash drive in the list of disks. Remove any existing partition. Add a new partition of type "LUKS + Ext4". You will be asked to name it (call it "GPG_Keys" and asked for a password. Here is where you will use one of the two diceware passphrases you created.
+
+Once the formatting is complete, eject and remove the "GPG KEYS" drive. Re-insert it and verify that you are prompted for a passphrase and that your passphrase will open it. If not automatically prompted, you may need to manually open the drive (double click the "Home" folder on the desktop, then double click the entry for your drive). 
+
 
 # Creating keys
 
-Create a temporary directory which will be deleted on [reboot](https://en.wikipedia.org/wiki/Tmpfs):
+
+You will want to open a Terminal window for many of the next steps (Applications -> System Tools -> Terminal)
+
+First, create a temporary directory which will be deleted on reboot:
 
 ```console
-$ export GNUPGHOME=$(mktemp -d) ; echo $GNUPGHOME
-/tmp/tmp.aaiTTovYgo
+export GNUPGHOME=$(mktemp -d); echo $GNUPGHOME
+/tmp/tmp.p6bt3D4svJ
 ```
 
 Create a hardened configuration for GPG with the following options or by downloading [drduh/config/gpg.conf](https://github.com/drduh/config/blob/master/gpg.conf):
 
 ```console
-$ curl -o $GNUPGHOME/gpg.conf https://raw.githubusercontent.com/drduh/config/master/gpg.conf
+$ curl --proxy socks://localhost:9050/ -o $GNUPGHOME/gpg.conf https://raw.githubusercontent.com/drduh/config/master/gpg.conf
 
 $ cat $GNUPGHOME/gpg.conf
 personal-cipher-preferences AES256 AES192 AES
@@ -234,18 +316,22 @@ throw-keyids
 use-agent
 ```
 
-Disable networking for the remainder of the setup.
-
-# Master key
-
-The first key to generate is the master key. It will be used for certification only - to issue subkeys that are used for encryption, signing and authentication. This master key should be kept offline at all times and only accessed to revoke or issue new subkeys.
-
-You'll be prompted to enter and verify a passphrase - keep it handy as you'll need it throughout. To generate a strong passphrase which could be written down in a hidden or secure place; or memorized:
+Run gpg for the first time which will create an empty public keyring and the trustdb.
 
 ```console
-$ gpg --gen-random -a 0 24
-ydOmByxmDe63u7gqx2XI9eDgpvJwibNH
+$ gpg -kv
+gpg: keybox '/tmp/tmp.p6bt3D4svJ/pubring.kbx' created
+gpg: /tmp/tmp.p6bt3D4svJ/trustdb.gpg: trustdb created
+gpg: using pgp trust model
 ```
+
+Disable networking for the remainder of the setup.
+
+# Creating Your Main key
+
+The first key to generate is the main key. It will be used for certification only - to issue subkeys that are used for encryption, signing and authentication. This main key will be kept offline on your KEYS flash drive at all times and only accessed to revoke or issue new subkeys.
+
+You'll be prompted at some point by a GUI `pinentry` program to enter and verify a passphrase: this is where you will use the second of the two diceware passphrases you created above. Unfortunately, `pinentry` will complain if your passphrase is only lowercase letters (as would be created with diceware above). If you want, you can add a few special characters to the passphrase, but remember to record or memorize what you added. Otherwise you can ignore the warning as your five to eight word diceware passphrase should be good enough.
 
 Generate a new key with GPG, selecting `(8) RSA (set your own capabilities)`, `Certify`-only and `4096` bit keysize. Do not set the key to expire - see [Note #3](#notes).
 
@@ -262,7 +348,6 @@ Please select what kind of key you want:
    (9) ECC and ECC
   (10) ECC (sign only)
   (11) ECC (set your own capabilities)
-  (13) Existing key
 Your selection? 8
 
 Possible actions for a RSA key: Sign Certify Encrypt Authenticate
@@ -309,11 +394,11 @@ Is this correct? (y/N) y
 
 GnuPG needs to construct a user ID to identify your key.
 
-Real name: Dr Duh
-Email address: doc@duh.to
-Comment: [Optional - leave blank]
+Real name: Main Key
+Email address: [Optional]
+Comment: [Optional]
 You selected this USER-ID:
-    "Dr Duh <doc@duh.to>"
+    "Main Key"
 
 Change (N)ame, (C)omment, (E)mail or (O)kay/(Q)uit? o
 
@@ -321,17 +406,18 @@ We need to generate a lot of random bytes. It is a good idea to perform
 some other action (type on the keyboard, move the mouse, utilize the
 disks) during the prime generation; this gives the random number
 generator a better chance to gain enough entropy.
-gpg: /tmp.FLZC0xcM/trustdb.gpg: trustdb created
+
+[DXP: replace this example output with the one you made]
+
+gpg: /tmp/tmp.p6bt3D4svJ/trustdb.gpg: trustdb created
 gpg: key 0xFF3E7D88647EBCDB marked as ultimately trusted
-gpg: directory '/tmp.FLZC0xcM/openpgp-revocs.d' created
-gpg: revocation certificate stored as '/tmp.FLZC0xcM/openpgp-revocs.d/011CE16BD45B27A55BA8776DFF3E7D88647EBCDB.rev'
+gpg: directory '/tmp/tmp.p6bt3D4svJ/openpgp-revocs.d' created
+gpg: revocation certificate stored as '/tmp/tmp.p6bt3D4svJ/openpgp-revocs.d/011CE16BD45B27A55BA8776DFF3E7D88647EBCDB.rev'
 public and secret key created and signed.
 
-Note that this key cannot be used for encryption.  You may want to use
-the command "--edit-key" to generate a subkey for this purpose.
 pub   rsa4096/0xFF3E7D88647EBCDB 2017-10-09 [C]
       Key fingerprint = 011C E16B D45B 27A5 5BA8  776D FF3E 7D88 647E BCDB
-uid                              Dr Duh <doc@duh.to>
+uid                              Main Key
 ```
 
 As of GPG [version 2.1](https://www.gnupg.org/faq/whats-new-in-2.1.html#autorev), a revocation certificate is automatically generated at this time.
@@ -344,22 +430,26 @@ $ export KEYID=0xFF3E7D88647EBCDB
 
 # Subkeys
 
-Edit the Master key to add subkeys:
+The Main key we created is only able to certify other keys and subkeys. We need to edit the Main key to add subkeys for Signing, Encryption and Authentication (if desired):
 
 ```console
 $ gpg --expert --edit-key $KEYID
 
 Secret key is available.
 
+gpg: checking the trustdb
+gpg: marginals needed: 3 completes needed: 1  trust model: pgp
+gpg: depth: 0  valid:   1  signed:   0  trust: 0-, 0q, 0n, 0m, 0f, 1u
 sec  rsa4096/0xEA5DE91459B80592
     created: 2017-10-09  expires: never       usage: C
     trust: ultimate      validity: ultimate
-[ultimate] (1). Dr Duh <doc@duh.to>
+[ultimate] (1). Main Key
 ```
 
-Use 4096-bit keysize - or 2048-bit on NEO.
+Use 4096-bit keysize for all subkeys - or 2048-bit if you are using a NEO Yubikey.
 
-Use a 1 year expiration - it can always be renewed using the offline Master certification key.
+Use a 2 year expiration - it can always be renewed using the offline Main certification key.
+
 
 ## Signing
 
@@ -370,7 +460,7 @@ gpg> addkey
 Key is protected.
 
 You need a passphrase to unlock the secret key for
-user: "Dr Duh <doc@duh.to>"
+user: "Main Key"
 4096-bit RSA key, ID 0xFF3E7D88647EBCDB, created 2016-05-24
 
 Please select what kind of key you want:
@@ -380,6 +470,10 @@ Please select what kind of key you want:
    (6) RSA (encrypt only)
    (7) DSA (set your own capabilities)
    (8) RSA (set your own capabilities)
+  (10) ECC (sign only)
+  (11) ECC (set your own capabilities)
+  (12) ECC (encrypt only)
+  (13) Existing key
 Your selection? 4
 RSA keys may be between 1024 and 4096 bits long.
 What keysize do you want? (2048) 4096
@@ -390,7 +484,7 @@ Please specify how long the key should be valid.
       <n>w = key expires in n weeks
       <n>m = key expires in n months
       <n>y = key expires in n years
-Key is valid for? (0) 1y
+Key is valid for? (0) 2y
 Key expires at Mon 10 Sep 2018 00:00:00 PM UTC
 Is this correct? (y/N) y
 Really create? (y/N) y
@@ -455,7 +549,7 @@ ssb  rsa4096/0x5912A795E90DD2CF
 
 ## Authentication
 
-Finally, create an [authentication key](https://superuser.com/questions/390265/what-is-a-gpg-with-authenticate-capability-used-for).
+Finally, if desired, you can create an [authentication key](https://superuser.com/questions/390265/what-is-a-gpg-with-authenticate-capability-used-for).
 
 GPG doesn't provide an authenticate-only key type, so select `(8) RSA (set your own capabilities)` and toggle the required capabilities until the only allowed action is `Authenticate`:
 
@@ -541,7 +635,13 @@ ssb  rsa4096/0x5912A795E90DD2CF
 ssb  rsa4096/0x3F29127E79649A3D
     created: 2017-10-09  expires: 2018-10-09       usage: A
 [ultimate] (1). Dr Duh <doc@duh.to>
+```
 
+**Optional** Add any additional identities or email addresses now using the `adduid` command.
+
+Now, exit the key editor and save your new subkeys.
+
+```console
 gpg> save
 ```
 
@@ -561,8 +661,6 @@ ssb   rsa4096/0x5912A795E90DD2CF 2017-10-09 [E] [expires: 2018-10-09]
 ssb   rsa4096/0x3F29127E79649A3D 2017-10-09 [A] [expires: 2018-10-09]
 ```
 
-**Optional** Add any additional identities or email addresses now using the `adduid` command.
-
 To verify with OpenPGP key checks, use the automated [key best practice checker](https://riseup.net/en/security/message-security/openpgp/best-practices#openpgp-key-checks):
 
 ```console
@@ -571,259 +669,49 @@ $ gpg --export $KEYID | hokey lint
 
 The output will display any problems with your key in red text. If everything is green, your key passes each of the tests. If it is red, your key has failed one of the tests.
 
-> hokey may warn (orange text) about cross certification for the authentication key. GPG's [Signing Subkey Cross-Certification](https://gnupg.org/faq/subkey-cross-certify.html) documentation has more detail on cross certification, and gpg v2.2.1 notes "subkey <keyid> does not sign and so does not need to be cross-certified". hokey may also indicate a problem (red text) with `Key expiration times: []` on the primary key (see [Note #3](#notes) about not setting an expiry for the primary key).
+hokey may warn (orange text) about cross certification for the authentication key. GPG's [Signing Subkey Cross-Certification](https://gnupg.org/faq/subkey-cross-certify.html) documentation has more detail on cross certification, and gpg v2.2.1 notes "subkey <keyid> does not sign and so does not need to be cross-certified". hokey may also indicate a problem (red text) with `Key expiration times: []` on the primary key (see [Note #3](#notes) about not setting an expiry for the primary key).
 
-# Export keys
+# Export and Backup keys
 
-The Master and subkeys will be encrypted with your passphrase when exported.
+Once your GPG subkeys are moved to YubiKey, they cannot be extracted again!
 
-Save a copy of your keys:
+For this and other reasons, we want to export a copy of all keys so that we can store them on the encrypted KEYS flash drive and retrieve them if needed. The Main key and subkeys will be encrypted with your Main key's passphrase when exported.
 
-```console
-$ gpg --armor --export-secret-keys $KEYID > $GNUPGHOME/mastersub.key
+First, if your KEYS flash drive is not still inserted, insert it now and open the encrypted partition.
 
-$ gpg --armor --export-secret-subkeys $KEYID > $GNUPGHOME/sub.key
-```
-
-On Windows, note that using any extension other than `.gpg` or attempting IO redirection to a file will garble the secret key, making it impossible to import it again at a later date:
+Second, export a copy of your keys:
 
 ```console
-$ gpg --armor --export-secret-keys $KEYID -o \path\to\dir\mastersub.gpg
-
-$ gpg --armor --export-secret-subkeys $KEYID -o \path\to\dir\sub.gpg
+$ export EXPORTDIR=/media/amnesia/GPG_Keys/export
+$ mkdir $EXPORTDIR
+$ gpg --armor --export-secret-keys $KEYID > $EXPORTDIR/main_and_sub.key
 ```
 
-# Backup keys
+It is also useful to have a export of just the subkeys. 
 
-Once GPG keys are moved to YubiKey, they cannot be extracted again!
+```console
+$ gpg --armor --export-secret-subkeys $KEYID > $EXPORTDIR/sub.key
+```
+Third, we want to backup the entire temporary GNUPGHOME directory as it contains our keyrings and `gpg.conf` file.
 
-Make sure you have made an **encrypted** backup before proceeding. An encrypted USB drive or container can be made using [VeraCrypt](https://www.veracrypt.fr/en/Downloads.html).
+```console
+$ cp -avi $GNUPGHOME /media/amnesia/GPG_Keys/.gnupg
+```
+
+If you have a fourth flash drive, you can make that a copy of the KEYS drive which you can store offsite. Make sure it is also encrypted as described above. You can either repeat the above commands for that drive, or copy the KEYS drive separately.
 
 Also consider using a [paper copy](https://www.jabberwocky.com/software/paperkey/) of the keys as an additional backup measure.
 
-## Linux
+Keep the KEYS flash drive mounted if you plan on setting up two or more yubikeys as `keytocard` **will [delete](https://lists.gnupg.org/pipermail/gnupg-users/2016-July/056353.html) the local copy** on save.
 
-Attach a USB disk and check its label:
+Otherwise, unmount and disconnect the KEYS flash drive.
 
-```console
-$ sudo dmesg | tail
-scsi8 : usb-storage 2-1:1.0
-usbcore: registered new interface driver usb-storage
-scsi 8:0:0:0: USB 0: 0 ANSI: 6
-sd 8:0:0:0: Attached scsi generic sg4 type 0
-sd 8:0:0:0: [sde] 62980096 512-byte logical blocks: (32.2 GB/30.0 GiB)
-sd 8:0:0:0: [sde] Write Protect is off
-sd 8:0:0:0: [sde] Mode Sense: 43 00 00 00
-sd 8:0:0:0: [sde] Attached SCSI removable disk
-```
 
-Check the size to make sure it's the right device:
-
-```console
-$ sudo fdisk -l /dev/sde
-Disk /dev/sde: 30 GiB, 32245809152 bytes, 62980096 sectors
-/dev/sde1        2048 62980095 62978048  30G  6 FAT16
-```
-
-Erase and create a new partition table:
-
-```console
-$ sudo fdisk /dev/sde
-Welcome to fdisk (util-linux 2.25.2).
-
-Command (m for help): o
-Created a new DOS disklabel with disk identifier 0xeac7ee35.
-
-Command (m for help): w
-The partition table has been altered.
-Calling ioctl() to re-read partition table.
-Syncing disks.
-```
-
-Remove and reinsert the USB drive, then create a new partition, selecting defaults:
-
-```console
-$ sudo fdisk /dev/sde
-Welcome to fdisk (util-linux 2.25.2).
-
-Command (m for help): n
-Partition type
-   p   primary (0 primary, 0 extended, 4 free)
-   e   extended (container for logical partitions)
-Select (default p): p
-Partition number (1-4, default 1): 1
-First sector (2048-62980095, default 2048):
-Last sector, +sectors or +size{K,M,G,T,P} (2048-62980095, default 62980095):
-
-Created a new partition 1 of type 'Linux' and of size 30 GiB.
-
-Command (m for help): w
-The partition table has been altered.
-Calling ioctl() to re-read partition table.
-Syncing disks.
-```
-
-Use [LUKS](https://askubuntu.com/questions/97196/how-secure-is-an-encrypted-luks-filesystem) to encrypt the new partition:
-
-```console
-$ sudo cryptsetup luksFormat /dev/sde1
-
-WARNING!
-========
-This will overwrite data on /dev/sde1 irrevocably.
-
-Are you sure? (Type uppercase yes): YES
-Enter passphrase:
-Verify passphrase:
-```
-
-Mount the partition:
-
-```console
-$ sudo cryptsetup luksOpen /dev/sde1 usb
-Enter passphrase for /dev/sde1:
-```
-
-Create a filesystem:
-
-```console
-$ sudo mkfs.ext4 /dev/mapper/usb -L usb
-mke2fs 1.43.4 (31-Jan-2017)
-Creating filesystem with 7871744 4k blocks and 1970416 inodes
-Superblock backups stored on blocks:
-        32768, 98304, 163840, 229376, 294912, 819200, 884736, 1605632, 2654208,
-        4096000
-
-Allocating group tables: done
-Writing inode tables: done
-Creating journal (32768 blocks): done
-Writing superblocks and filesystem accounting information: done
-```
-
-Mount the filesystem and copy the temporary GNUPG directory:
-
-```console
-$ sudo mkdir /mnt/encrypted-usb
-
-$ sudo mount /dev/mapper/usb /mnt/encrypted-usb
-
-$ sudo cp -avi $GNUPGHOME /mnt/encrypted-usb
-```
-
-Keep the backup mounted if you plan on setting up two or more keys as `keytocard` **will [delete](https://lists.gnupg.org/pipermail/gnupg-users/2016-July/056353.html) the local copy** on save.
-
-Otherwise, unmount and disconnected the encrypted USB disk:
-
-```console
-$ sudo umount /mnt
-
-$ sudo cryptsetup luksClose usb
-```
-
-## OpenBSD
-
-Attach a USB disk and determine its label:
-
-```console
-$ dmesg | grep sd.\ at
-sd2 at scsibus5 targ 1 lun 0: <Samsung, Flash Drive DUO, 1100> SCSI4 0/direct removable serial.50010000000000000001
-```
-
-Print the existing partitions to make sure it's the right device:
-
-```console
-$ doas disklabel -h sd2
-```
-
-Initialize the disk by creating an `a` partition with FS type `RAID`:
-
-```console
-$ doas fdisk -iy sd2
-Writing MBR at offset 0.
-
-$ doas disklabel -E sd2
-Label editor (enter '?' for help at any prompt)
-> a a
-offset: [64]
-size: [62653436]
-FS type: [4.2BSD] RAID
-> w
-> q
-No label changes.
-
-$ doas bioctl -c C -l sd2a softraid0
-New passphrase:
-Re-type passphrase:
-softraid0: CRYPTO volume attached as sd3
-```
-
-Make an `i` partition, then make and mount the filesystem:
-
-```console
-$ doas fdisk -iy sd3
-Writing MBR at offset 0.
-
-$ doas disklabel -E sd3
-Label editor (enter '?' for help at any prompt)
-> a i
-offset: [64]
-size: [62637371]
-FS type: [4.2BSD]
-> w
-> q
-No label changes.
-
-$ doas newfs sd3i
-/dev/rsd3i: 30584.6MB in 62637344 sectors of 512 bytes
-152 cylinder groups of 202.47MB, 12958 blocks, 25984 inodes each
-super-block backups (for fsck -b #) at:
- 32, 414688, 829344, 1244000, 1658656, 2073312, 2487968, 2902624, 3317280, 3731936, 4146592, 4561248, 4975904,
-[...]
-```
-
-Mount the filesystem and copy the temporary GNUPG directory:
-
-```console
-$ doas mkdir /mnt/encrypted-usb
-
-$ doas mount /dev/sd3i /mnt/encrypted-usb
-
-$ doas cp -avi $GNUPGHOME /mnt/encrypted-usb
-```
-
-Keep the backup mounted if you plan on setting up two or more keys as `keytocard` **will [delete](https://lists.gnupg.org/pipermail/gnupg-users/2016-July/056353.html) the local copy** on save.
-
-Otherwise, unmount and disconnected the encrypted USB disk:
-
-```console
-$ doas umount /mnt/encrypted-usb
-
-$ doas bioctl -d sd3
-```
-
-See [OpenBSD FAQ#14](https://www.openbsd.org/faq/faq14.html#softraidCrypto) for more information.
-
-# Configure YubiKey
-
-**Note** YubiKey NEO shipped after November 2015 have [all modes enabled](https://www.yubico.com/support/knowledge-base/categories/articles/yubikey-neo-manager/); so this step may be skipped. Older versions of the YubiKey NEO may need to be reconfigured as a composite USB device (HID + CCID) which allows OTPs to be emitted while in use as a SmartCard.
-Plug in YubiKey and configure it with the `ykpersonalize` utility:
-
-```console
-$ sudo ykpersonalize -m82
-Firmware version 4.3.7 Touch level 527 Program sequence 1
-
-The USB mode will be set to: 0x82
-
-Commit? (y/n) [n]: y
-```
-
-The -m option is the mode command. To see the different modes, enter `ykpersonalize -help`. Mode 82 (in hex) enables the YubiKey NEO as a composite USB device (HID + CCID).  Once you have changed the mode, you need to re-boot the YubiKey, so remove and re-insert it. On YubiKey NEO with firmware version 3.3 or higher, you can enable composite USB device with `-m86` instead of `-m82`.
-
-**Windows** Use the [YubiKey NEO Manager](https://www.yubico.com/products/services-software/download/yubikey-neo-manager/) to enable CCID functionality.
 
 # Configure Smartcard
+Insert your yubikey. Make sure you have verified it as described above.
 
-Use GPG to configure YubiKey as a smartcard:
+Use GPG to edit and configure YubiKey as a smartcard:
 
 ```console
 $ gpg --card-edit
@@ -900,8 +788,7 @@ Cardholder's given name: Dr
 gpg/card> lang
 Language preferences: en
 
-gpg/card> login
-Login data (account name): doc@duh.to
+gpg/card> forcesig
 
 gpg/card> [Press Enter]
 
@@ -1053,6 +940,7 @@ ssb>  rsa4096/0x3F29127E79649A3D 2017-10-09 [A] [expires: 2018-10-09]
 ```
 
 # Export public key
+DXP: I'm here... make sure to talk about mounting the XFER flash drive for this.
 
 Mount another USB disk to copy the *public* key, or save it somewhere where it can be easily accessed later.
 
